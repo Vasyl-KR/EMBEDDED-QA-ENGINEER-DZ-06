@@ -1,4 +1,4 @@
-# hw6/hw7 — SENTRY-C1 pytest Test Framework
+# DZ-09 — SENTRY-C1 pytest Test Framework
 
 Домашнє завдання курсу Embedded QA Engineer: pytest-фреймворк для
 автоматизованого тестування прошивки **SENTRY-C1** (ESP32-S3) через
