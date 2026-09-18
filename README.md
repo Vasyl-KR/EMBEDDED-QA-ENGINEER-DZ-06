@@ -26,6 +26,7 @@ UART CLI. Пристрій керується повністю через пос
 
 ```bash
 pip install pyserial pytest
+pip install pytest-html
 ```
 
 ## Запуск
@@ -37,6 +38,7 @@ pip install pyserial pytest
 pytest -v                    # усі тести в алфавітному порядку
 pytest -v -m smoke           # лише смоки
 pytest -v -m functional      # лише функціональні
+pytest -v -m smoke --html=reports/smoke.html --self-contained-html # з HTML репортингом
 ```
 
 ## Фікстури (conftest.py)
