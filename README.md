@@ -1,63 +1,85 @@
-# DZ-09 — SENTRY-C1 pytest Test Framework
+# DZ-14 — Тестування Wi-Fi та BLE
 
-Домашнє завдання курсу Embedded QA Engineer: pytest-фреймворк для
-автоматизованого тестування прошивки **SENTRY-C1** (ESP32-S3) через
-UART CLI. Пристрій керується повністю через послідовний порт
-(115200 8N1), опис усіх команд і поведінки — у PRD прошивки
-(`fw_3/SENTRY-C1_PRD.md` в репозиторії курсу).
+Домашнє завдання курсу Embedded QA Engineer: автоматизоване тестування
+прошивки **station_WiFi** (Частина A) та переважно ручне тестування
+прошивки **SENTRY-BLE** (Частина B) на одній платі ESP32-S3 DevKit.
+Спільний PRD обох прошивок — `fw_4/PRD.md` у репозиторії курсу.
 
 ## Структура проєкту
 
 ```
 ├── drivers/
-│   └── device.py        # DeviceDriver: уся протокольна логіка (framing, ANSI, таймаути)
+│   └── device.py              # DeviceDriver: протокольна логіка + wifi_* методи
 ├── tests/
-│   ├── smoke/
-│   │   └── test_smoke.py
-│   └── functional/
-│       ├── test_alarm.py
-│       ├── test_config.py
-│       └── test_distance_stability.py
-├── conftest.py           # фікстури: port → device → logged_device
-└── pytest.ini
+│   └── wifi/
+│       ├── test_wifi_positive.py
+│       └── test_wifi_negative.py
+│       # tests/ble/ — буде додано разом із Частиною B
+├── conftest.py                # фікстури: port → device → clean_wifi, wifi_credentials
+├── pytest.ini
+├── requirements.txt
+├── .env.example                # шаблон для WIFI_SSID/WIFI_PASSWORD
+└── .env                        # реальні креди тестової мережі (у .gitignore, не здається)
 ```
 
 ## Встановлення
 
 ```bash
-pip install pyserial pytest
-pip install pytest-html
+pip install -r requirements.txt
+```
+
+## Налаштування тестової мережі
+
+SSID і пароль не хардкодяться в тестах — беруться з `.env` (читається
+вручну в `conftest.py`, без зайвих залежностей):
+
+```bash
+cp .env.example .env
+# і відредагувати WIFI_SSID / WIFI_PASSWORD під свою мережу (2.4 GHz)
 ```
 
 ## Запуск
 
-Переконайся, що плата підключена і жодна інша програма
-(`monitor.bat`/`flash.bat` тощо) не тримає відкритим COM-порт.
+Переконайтеся, що плата прошита `station_WiFi` (для Частини A) і жодна
+інша програма не тримає відкритим COM-порт.
 
 ```bash
-pytest -v                    # усі тести в алфавітному порядку
-pytest -v -m smoke           # лише смоки
-pytest -v -m functional      # лише функціональні
-pytest -v -m smoke --html=reports/smoke.html --self-contained-html # з HTML репортингом
+pytest -v tests/wifi/                # уся Частина A
+pytest -v -m wifi                    # те саме через маркер
+pytest -v -m wifi --html=reports/wifi.html --self-contained-html # з HTML репортингом
 ```
 
 ## Фікстури (conftest.py)
 
 - `port` (session) — автопошук COM-порту за VID.
-- `device` (session) — одне serial-з'єднання на весь прогін (дороге, тому не відкривається щотесту).
-- `logged_device` (function) — чистий стан авторизації перед кожним тестом: `logout` → `register`/`login`. Дешево, тому per-test.
+- `device` (session) — одне serial-з'єднання на весь прогін.
+- `clean_wifi` (function) — перед кожним тестом викликає `wifi_disconnect()`: прошивка відмовляється виконувати `connect`, поки вже підключена (`sta is connected, disconnect before connecting to new ap` → `connection timeout`), тож кожен тест повинен стартувати з гарантовано відключеного стану.
+- `clean_wifi_after` (function, будується на `clean_wifi`) — те саме плюс **teardown**: після тесту (незалежно від pass/fail) ще раз форсує й підтверджує `wifi_disconnect()`. Потрібна для тестів, що навмисно намагаються підключитись і очікують невдачі (`test_wrong_password`, `test_nonexistent_ssid`).
+- `wifi_credentials` (session) — SSID/пароль з `.env`; `pytest.skip`, якщо не заповнено.
+
+## DeviceDriver: нові Wi-Fi методи
+
+- `wifi_scan()` — список SSID.
+- `wifi_connect(ssid, password)` — проходить інтерактивний діалог `connect` (очікування по патернах, без `time.sleep`): промпт SSID → промпт пароля (якщо він з'являється — прошивка іноді пропускає цей крок і одразу конектиться) → результат. Порожній `ssid`/`password` = перевикористання збережених кредів. Повертає True/False. При `False` пише в лог (`drivers.device`, рівень WARNING) конкретну причину — немає промпта SSID, таймаут після відправки SSID, чи фінальний результат (`password too short` / `connection timeout` / `connect to the AP fail`).
+- `wifi_status()` — dict: `connected`, `ssid`, `ip`, `rssi`.
+- `wifi_disconnect()` — шле `disconnect` і **чекає підтвердження** по рядку `wifi station: disconnected` (а не просто відправляє команду й довіряє). Підтвердження не можна перевірити через `wifi_status()` — саме там і є баг (див. нижче).
+
+## Тести Частини A
+
+- **test_wifi_positive.py**: `test_scan_finds_networks`, `test_connect_success`, `test_credentials_survive_reboot` (`connect` з реальними кредами → `reboot` → `connect` з порожнім вводом → підключення по збережених кредах, PRD FR-W4).
+- **test_wifi_negative.py**: `test_wrong_password`, `test_short_password` (`password too short (min 8 chars)`, PRD FR-W3), `test_nonexistent_ssid`.
+- **`test_disconnect`** позначений `@pytest.mark.xfail`: **реальний баг прошивки** — після `disconnect` команда `status` все одно рапортує `WiFi: connected` (з порожнім SSID та IP `0.0.0.0`) замість `disconnected`, що суперечить PRD FR-W5/FR-W6.
+
+Результат прогону: **6 passed, 1 xfailed**.
 
 ## Логування
 
-Кожен тестовий файл має власний `logging.getLogger(__name__)` і логує
-ключові кроки (`log.info(...)`) — що надсилається, скільки рядків
-прийшло, який стан отримано. У `pytest.ini` увімкнено `log_cli = true`,
-тому ці логи видно **наживо в консолі для кожного тесту**.
+Кожен тестовий файл і сам `drivers/device.py` мають власний
+`logging.getLogger(__name__)`. Тести логують кроки через `log.info(...)`;
+драйвер додатково пише `log.warning(...)` з конкретною причиною кожного
+`False` з `wifi_connect()`. У `pytest.ini` увімкнено `log_cli = true` —
+усе це видно наживо в консолі для кожного тесту, не лише для тих, що впали.
 
-## Тести
+## Частина B (BLE)
 
-- **smoke** (`tests/smoke/test_smoke.py`) — базова живучість: відповідь на `help`, відповідь на `status`, виживання після `reboot` (через `wait_for_pattern("Device ready")`, без `time.sleep`).
-- **test_alarm.py** — параметризована перевірка межі спрацювання (`value >= threshold` за PRD 8.2): нижче/на межі/вище порогу.
-- **test_config.py** — persistence конфігурації через реальний `reboot`. Позначений `@pytest.mark.xfail`: **реальний баг прошивки** — `config save` рапортує успіх, але після фізичного reboot `config load` все одно виводить "No saved config found in NVS" і завантажує дефолти, хоча PRD стверджує, що збережена конфігурація має пережити reboot.
-- **test_distance_stability.py** — стабільність послідовних показань HC-SR04 для статичного об'єкта (розкид у межах толерантності).
-
+TBD
