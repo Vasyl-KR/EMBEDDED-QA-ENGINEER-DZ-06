@@ -59,4 +59,34 @@ WIFI_PASSWORD=<ваш пароль>
 
 ## Частина B — BLE (SENTRY-BLE)
 
-TBD
+### B1. Ручний чек-лист (nRF Connect for Mobile)
+
+Пристрій: `SENTRY-BLE`, MAC `28:84:85:89:1B:FA`. Паралельно з nRF Connect
+тримався відкритим UART-термінал (115200 8N1) як другий канал
+спостереження.
+
+| # | Перевірка | PRD | Результат | Доказ (скріни/логи) |
+|---|-----------|-----|-----------|-------|
+| 1 | **Scan** — пристрій знайдено, зафіксовано RSSI | FR-A1 | ✅ PASS | RSSI `-38 dBm`, "LE General Discoverable", Complete Local Name `SENTRY-BLE` |
+| 2 | **Connect + discovery** — сервіси `0x180D` і `0x1815`, дві характеристики (LED/RELAY) з правильними UUID | FR-A3, FR-G3 | ✅ PASS | [screens/nRF.jpg](screens/nRF.jpg); UART: `Connected, conn_id 0, remote 7b:ff:7d:52:91:b1` |
+| 3 | **Heart Rate** — підписка на indications `0x2A37`, значення в межах 60-80 bpm | FR-G1, FR-G2 | ✅ PASS | CCCD `0x2902` = `Indications enabled`, значення `62 bpm`, звірено з UART-логом |
+| 4 | **HR spike** — команда `hr spike`, наступні значення ~190-199 bpm на 5с | FR-C3 | ✅ PASS | nRF: `194 bpm`; UART: 5 тіків `194, 199, 197, 192, 199`, далі повернення до норми (`73 bpm`) |
+| 5 | **LED через BLE** — write `01`/`00`, фізична реакція + лог | FR-G4 | ✅ PASS | UART: `LED ON!` / `LED OFF!`, LED на платі вмикався та вимикався |
+| 6 | **RELAY через BLE** — write `01`/`00`, фізичне клацання + лог | FR-G4 | ✅ PASS | UART: `RELAY ON!` / `RELAY OFF!`, реле клацало на 01 |
+| 7 | **Read після write** — читання повертає актуальний стан | FR-G5 | ✅ PASS | Read після write `01`/`00` повертав відповідне значення; додатково перевірено, що зміна стану фізичною кнопкою також коректно відображається через read |
+| 8 | **Конфлікт каналів керування** — BLE `write 01` у LED → вимкнення через UART `led off` → BLE `read` | FR-G5 | ✅ PASS | [screens/real_photo.jpg](screens/real_photo.jpg) — фізичний стенд, видно LED на платі та реле; read після зовнішньої зміни каналом UART повернув коректне (оновлене) значення — усі три канали (BLE/UART/кнопка) керують одним фізичним станом |
+| 9 | **Reconnect** — розрив з'єднання, повторне підключення | FR-A2 | ✅ PASS | UART: `Disconnected, remote 7b:ff:7d:52:91:b1, reason 0x16`; пристрій знову знайдено в скані, підключення повторно пройшло без проблем |
+
+**Підсумок B1: 9/9 пунктів відповідають PRD, відхилень від очікуваної поведінки не знайдено (що дуже дивно і мені здається я щось пропустив)** 
+
+### B2. Автотест на `bleak`
+
+Повний HTML-звіт (`pytest-html`): [reports/ble.html](reports/ble.html).
+Згенеровано 29-Sep-2026 15:36:51, **1 test took 00:00:02**.
+
+| Тест | Результат | Тривалість |
+|------|-----------|------------|
+| `test_ble_smoke.py::test_ble_led_dual_channel` | PASSED | 00:00:02 |
+
+
+**Підсумок: 1 passed**

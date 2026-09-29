@@ -11,10 +11,11 @@
 ├── drivers/
 │   └── device.py              # DeviceDriver: протокольна логіка + wifi_* методи
 ├── tests/
-│   └── wifi/
-│       ├── test_wifi_positive.py
-│       └── test_wifi_negative.py
-│       # tests/ble/ — буде додано разом із Частиною B
+│   ├── wifi/
+│   │   ├── test_wifi_positive.py
+│   │   └── test_wifi_negative.py
+│   └── ble/
+│       └── test_ble_smoke.py  # bleak: write LED через BLE + підтвердження у UART-лозі
 ├── conftest.py                # фікстури: port → device → clean_wifi, wifi_credentials
 ├── pytest.ini
 ├── requirements.txt
@@ -72,14 +73,23 @@ pytest -v -m wifi --html=reports/wifi.html --self-contained-html # з HTML ре�
 
 Результат прогону: **6 passed, 1 xfailed**.
 
-## Логування
-
-Кожен тестовий файл і сам `drivers/device.py` мають власний
-`logging.getLogger(__name__)`. Тести логують кроки через `log.info(...)`;
-драйвер додатково пише `log.warning(...)` з конкретною причиною кожного
-`False` з `wifi_connect()`. У `pytest.ini` увімкнено `log_cli = true` —
-усе це видно наживо в консолі для кожного тесту, не лише для тих, що впали.
-
 ## Частина B (BLE)
 
-TBD
+Переконайтеся, що плата прошита `Bluedroid_GATT_Server` (SENTRY-BLE),
+Bluetooth на комп'ютері увімкнений, і жодна інша програма не тримає
+відкритим COM-порт.
+
+```bash
+pytest -v tests/ble/            # автотест B2
+pytest -v -m ble                # те саме через маркер
+pytest -v -m ble --html=reports/ble.html --self-contained-html # з HTML репортингом
+```
+
+**Тест Частини B** — `tests/ble/test_ble_smoke.py::test_ble_led_dual_channel`:
+`bleak` шукає `SENTRY-BLE` → підключається → пише `01` у LED-характеристику
+→ перевіряє `LED ON!` у UART-лозі (`device.wait_for(...)`, той самий
+`DeviceDriver`, що й для Wi-Fi) → пише `00` → перевіряє `LED OFF!` →
+відключається. Асинхронний код bleak обгорнутий у `asyncio.run(...)`
+всередині звичайної sync-функції.
+
+Результат прогону: **1 passed**.
