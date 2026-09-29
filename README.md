@@ -20,7 +20,6 @@
 ├── pytest.ini
 ├── requirements.txt
 ├── .env.example                # шаблон для WIFI_SSID/WIFI_PASSWORD
-└── .env                        # реальні креди тестової мережі (у .gitignore, не здається)
 ```
 
 ## Встановлення
@@ -65,7 +64,7 @@ pytest -v -m wifi --html=reports/wifi.html --self-contained-html # з HTML ре�
 - `wifi_status()` — dict: `connected`, `ssid`, `ip`, `rssi`.
 - `wifi_disconnect()` — шле `disconnect` і **чекає підтвердження** по рядку `wifi station: disconnected` (а не просто відправляє команду й довіряє). Підтвердження не можна перевірити через `wifi_status()` — саме там і є баг (див. нижче).
 
-## Тести Частини A
+## Тести частини A
 
 - **test_wifi_positive.py**: `test_scan_finds_networks`, `test_connect_success`, `test_credentials_survive_reboot` (`connect` з реальними кредами → `reboot` → `connect` з порожнім вводом → підключення по збережених кредах, PRD FR-W4).
 - **test_wifi_negative.py**: `test_wrong_password`, `test_short_password` (`password too short (min 8 chars)`, PRD FR-W3), `test_nonexistent_ssid`.
@@ -85,7 +84,7 @@ pytest -v -m ble                # те саме через маркер
 pytest -v -m ble --html=reports/ble.html --self-contained-html # з HTML репортингом
 ```
 
-**Тест Частини B** — `tests/ble/test_ble_smoke.py::test_ble_led_dual_channel`:
+**Тест частини B** — `tests/ble/test_ble_smoke.py::test_ble_led_dual_channel`:
 `bleak` шукає `SENTRY-BLE` → підключається → пише `01` у LED-характеристику
 → перевіряє `LED ON!` у UART-лозі (`device.wait_for(...)`, той самий
 `DeviceDriver`, що й для Wi-Fi) → пише `00` → перевіряє `LED OFF!` →
