@@ -1,94 +1,147 @@
-# DZ-14 — Тестування Wi-Fi та BLE
+# Фреймворк автотестів: SENTRY SWM-2 (fw_7)
 
-Домашнє завдання курсу Embedded QA Engineer: автоматизоване тестування
-прошивки **station_WiFi** (Частина A) та переважно ручне тестування
-прошивки **SENTRY-BLE** (Частина B) на одній платі ESP32-S3 DevKit.
-Спільний PRD обох прошивок — `fw_4/PRD.md` у репозиторії курсу.
+`pytest` + `pyserial`. Керує платою через UART-консоль (115200 8N1), нічого не
+хардкодить: COM-порт знаходить за VID USB-UART моста, Wi-Fi і акаунт беруться з `.env`.
+Автотести відповідають кейсам з `../TEST_CASES.md` (тип `A` / `AT`): ім'я тесту містить ID кейса,
+а перший рядок docstring - ID кейса та його назву англійською.
 
-## Структура проєкту
+Що автоматизовано (148 тестів, один тест = один рядок таблиці параметрів кейса):
 
-```
-├── drivers/
-│   └── device.py              # DeviceDriver: протокольна логіка + wifi_* методи
-├── tests/
-│   ├── wifi/
-│   │   ├── test_wifi_positive.py
-│   │   └── test_wifi_negative.py
-│   └── ble/
-│       └── test_ble_smoke.py  # bleak: write LED через BLE + підтвердження у UART-лозі
-├── conftest.py                # фікстури: port → device → clean_wifi, wifi_credentials
-├── pytest.ini
-├── requirements.txt
-├── .env.example                # шаблон для WIFI_SSID/WIFI_PASSWORD
-```
+| Область | Папка | Кейси | Прошивка |
+|---|---|---|---|
+| Smoke (зв'язок, доступ) | `tests/basic/` | базові | будь-яка |
+| Активний сонар | `tests/sonar/` | TC-SNR-01..20, 23..37 | 2.1.0 (регресія - і 2.3.0) |
+| OTA, happy path | `tests/ota/` | TC-OTA-01..07, 09, 10 | починає і завершує на 2.1.0 |
+| SENTRY Guard | `tests/guard/` | TC-GRD-01..19 | лише 2.3.0 |
 
 ## Встановлення
 
 ```bash
+cd framework
 pip install -r requirements.txt
+cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
 ```
 
-## Налаштування тестової мережі
+Заповніть `.env` своїми значеннями (файл у `.gitignore`, не комітиться):
 
-SSID і пароль не хардкодяться в тестах — беруться з `.env` (читається
-вручну в `conftest.py`, без зайвих залежностей):
+| Змінна | Призначення |
+|---|---|
+| `WIFI_SSID`, `WIFI_PASSWORD` | тестова мережа 2.4 GHz |
+| `SWM_LOGIN`, `SWM_PASSWORD` | акаунт для тестів (реєструється автоматично, якщо профілю на пристрої ще немає) |
+| `SWM_TARGET_CM` | відстань D (см) до нерухомої цілі перед датчиком, виміряна лінійкою; без неї тести з маркером `target` пропускаються |
 
-```bash
-cp .env.example .env
-# і відредагувати WIFI_SSID / WIFI_PASSWORD під свою мережу (2.4 GHz)
-```
+## Підготовка плати
+
+Прошийте 2.1.0 (`erase-flash`, потім `write-flash 0x0 sentry_fw7_v2.1.0_merged.bin`),
+версія 2.3.0 ставиться по OTA (`ota update beta`). Жодна інша програма (зокрема `miniterm`) не повинна тримати
+COM-порт відкритим. Перед тестами з маркером `target` поставте нерухому ціль перед датчиком.
+
+Яка прошивка потрібна:
+- sonar, basic, OTA - будь-яка з двох: кожен OTA-тест сам починає і завершує на 2.1.0 (навіть після падіння), а після останнього OTA-тесту плата **повертається на ту прошивку, з якої стартував прогін** (стартували на 2.3.0 - сонар піде на 2.3.0, стартували на 2.1.0 - на 2.1.0);
+- Guard - 2.3.0 вже на платі (Guard-тести прошивку не міняють; на 2.1.0 вони пропускаються);
+- для Guard ціль має стояти так, щоб `50 < D < 150` см (зона 50 - тиша, зона 150 - INTRUSION); інакше тести пропускаються.
 
 ## Запуск
 
-Переконайтеся, що плата прошита `station_WiFi` (для Частини A) і жодна
-інша програма не тримає відкритим COM-порт.
-
 ```bash
-pytest -v tests/wifi/                # уся Частина A
-pytest -v -m wifi                    # те саме через маркер
-pytest -v -m wifi --html=reports/wifi.html --self-contained-html # з HTML репортингом
+pytest                                # усе, що підходить до прошивки на платі
+pytest -m smoke                       # швидка перевірка зв'язку з платою
+pytest -m sonar                       # лише активний сонар
+pytest -m "sonar and positive"        # лише позитивні кейси сонара (negative - негативні)
+pytest -m "sonar and not target"      # без тестів, що потребують цілі
+pytest -m ota                         # лише OTA
+pytest -m guard                       # лише Guard (2.3.0)
+pytest tests/guard --html=reports/guard_v2.3.0.html --self-contained-html   # Guard зі звітом
+pytest -m regression                  # регресійний набір (має проходити на обох версіях)
+pytest -k tc_snr_11                   # один кейс за ID (усі його параметри)
+pytest "tests/sonar/test_sonar_positive.py::test_tc_snr_02_n_measurements_within_1_20[a-N=1-min]"   # один рядок таблиці параметрів
+pytest --html=reports/sonar_v2.1.0.html --self-contained-html   # HTML-звіт з логами
 ```
 
-## Фікстури (conftest.py)
-
-- `port` (session) — автопошук COM-порту за VID.
-- `device` (session) — одне serial-з'єднання на весь прогін.
-- `clean_wifi` (function) — перед кожним тестом викликає `wifi_disconnect()`: прошивка відмовляється виконувати `connect`, поки вже підключена (`sta is connected, disconnect before connecting to new ap` → `connection timeout`), тож кожен тест повинен стартувати з гарантовано відключеного стану.
-- `clean_wifi_after` (function, будується на `clean_wifi`) — те саме плюс **teardown**: після тесту (незалежно від pass/fail) ще раз форсує й підтверджує `wifi_disconnect()`. Потрібна для тестів, що навмисно намагаються підключитись і очікують невдачі (`test_wrong_password`, `test_nonexistent_ssid`).
-- `wifi_credentials` (session) — SSID/пароль з `.env`; `pytest.skip`, якщо не заповнено.
-
-## DeviceDriver: нові Wi-Fi методи
-
-- `wifi_scan()` — список SSID.
-- `wifi_connect(ssid, password)` — проходить інтерактивний діалог `connect` (очікування по патернах, без `time.sleep`): промпт SSID → промпт пароля (якщо він з'являється — прошивка іноді пропускає цей крок і одразу конектиться) → результат. Порожній `ssid`/`password` = перевикористання збережених кредів. Повертає True/False. При `False` пише в лог (`drivers.device`, рівень WARNING) конкретну причину — немає промпта SSID, таймаут після відправки SSID, чи фінальний результат (`password too short` / `connection timeout` / `connect to the AP fail`).
-- `wifi_status()` — dict: `connected`, `ssid`, `ip`, `rssi`.
-- `wifi_disconnect()` — шле `disconnect` і **чекає підтвердження** по рядку `wifi station: disconnected` (а не просто відправляє команду й довіряє). Підтвердження не можна перевірити через `wifi_status()` — саме там і є баг (див. нижче).
-
-## Тести частини A
-
-- **test_wifi_positive.py**: `test_scan_finds_networks`, `test_connect_success`, `test_credentials_survive_reboot` (`connect` з реальними кредами → `reboot` → `connect` з порожнім вводом → підключення по збережених кредах, PRD FR-W4).
-- **test_wifi_negative.py**: `test_wrong_password`, `test_short_password` (`password too short (min 8 chars)`, PRD FR-W3), `test_nonexistent_ssid`.
-- **`test_disconnect`** позначений `@pytest.mark.xfail`: **реальний баг прошивки** — після `disconnect` команда `status` все одно рапортує `WiFi: connected` (з порожнім SSID та IP `0.0.0.0`) замість `disconnected`, що суперечить PRD FR-W5/FR-W6.
-
-Результат прогону: **6 passed, 1 xfailed**.
-
-## Частина B (BLE)
-
-Переконайтеся, що плата прошита `Bluedroid_GATT_Server` (SENTRY-BLE),
-Bluetooth на комп'ютері увімкнений, і жодна інша програма не тримає
-відкритим COM-порт.
+Окремий скрипт (не тест) для оновлення плати до 2.3.0 по OTA: відновлює Wi-Fi і login, ставить `ota install 2.3.0`
+(з `force`, якщо на платі новіша версія), перевіряє результат; якщо 2.3.0 вже стоїть - нічого не робить.
+Код виходу: 0 - на платі 2.3.0, 1 - оновлення не вдалося, 2 - немає плати чи `.env`.
 
 ```bash
-pytest -v tests/ble/            # автотест B2
-pytest -v -m ble                # те саме через маркер
-pytest -v -m ble --html=reports/ble.html --self-contained-html # з HTML репортингом
+python tools/update_to_2_3_0.py
 ```
 
-**Тест частини B** — `tests/ble/test_ble_smoke.py::test_ble_led_dual_channel`:
-`bleak` шукає `SENTRY-BLE` → підключається → пише `01` у LED-характеристику
-→ перевіряє `LED ON!` у UART-лозі (`device.wait_for(...)`, той самий
-`DeviceDriver`, що й для Wi-Fi) → пише `00` → перевіряє `LED OFF!` →
-відключається. Асинхронний код bleak обгорнутий у `asyncio.run(...)`
-всередині звичайної sync-функції.
+Маркери (`pytest.ini`): `smoke`, `ota`, `sonar`, `guard`, `positive`, `negative`, `regression`,
+`target` (потрібна ціль на відстані D). Версію прошивки на платі тести визначають самі:
+`@pytest.mark.since("2.3.0")` пропускає тест на старішій прошивці,
+`@pytest.mark.until("2.3.0")` - на новішій.
 
-Результат прогону: **1 passed**.
+## Логи в HTML-звіті
+
+Кожен тест пише в лог кроки та очікуване / отримане (`log.info`), а драйвер - кожну команду
+(`-> distance 3`) і відповідь плати (`<- [SONAR] avg ...`). Усе це потрапляє в блок `Captured log`
+**для кожного тесту**, у тому числі пройденого (`log_level = DEBUG` у `pytest.ini`); на рівні DEBUG
+додатково йдуть сирі рядки плати з часовими мітками `I (мс)`. У консолі показується INFO.
+Паролі акаунта і PIN у логах замасковані (`***`), пароль Wi-Fi в лог не потрапляє.
+
+## Структура
+
+```
+framework/
+├── conftest.py            # фікстури (нижче)
+├── pytest.ini             # маркери, рівні логування
+├── requirements.txt
+├── .env.example
+├── tools/                 # update_to_2_3_0.py - окремий скрипт оновлення плати (не тест)
+├── drivers/device.py      # DeviceDriver + Response: протокол, коди E/W, команди сонара та акаунта
+└── tests/
+    ├── basic/             # test_smoke_basic.py: зв'язок, версія, доступ, акаунт
+    ├── ota/               # test_ota_happy_path.py (TC-OTA-01..07, 09, 10)
+    ├── sonar/             # test_sonar_positive.py (TC-SNR-01..20), test_sonar_negative.py (TC-SNR-23..37)
+    └── guard/             # test_guard_positive.py (TC-GRD-01..13), test_guard_negative.py (TC-GRD-14..19)
+```
+
+**Фікстури (`conftest.py`):**
+
+| Фікстура | Що робить |
+|---|---|
+| `port`, `device` (session) | автопошук порту; одне з'єднання на весь прогін |
+| `fw` (session) | версія прошивки, що працює на платі (для `since` / `until`) |
+| `online` | Wi-Fi підключено (перевіряється перед кожним тестом, за потреби - `reconnect` або `connect`) |
+| `logged_in` | сесія відкрита (за потреби - `register` + `login`, бо профіль міг зникнути після оновлення) |
+| `sonar` | `logged_in` + чистий стан сонара до і після тесту (калібрування, поріг alarm, фільтр, потік `distance log`) |
+| `guard` | `logged_in` + прошивка 2.3.0 (перевіряється наживо) + відомий стан охорони до і після тесту: знята, PIN 1234, зона 50, реле закрите, NORMAL, без alerts; потрібна ціль `50 < D < 150` см |
+| `fresh_attempts` | `guard` + перезавантаження плати, щоб лічильник хибних PIN був нульовим (обхід BUG-GRD-01) |
+| `ota_base` | плата на базовій 2.1.0 з Wi-Fi і login **до і після** тесту, що б тест не зробив (пройшов, упав, обірвав завантаження); якщо базу відновити не вдалося, прогін зупиняється (`pytest.exit`). Після останнього OTA-тесту модуля стартову прошивку прогону повертає фікстура `_restore_start_firmware` (module scope) |
+| `ota_beta` | `ota_base` + оновлення на beta 2.3.0; базу повертає завершення `ota_base` |
+| `restore_session` | функція для тестів з `reboot` / OTA: повертає Wi-Fi і login |
+| `account`, `wifi_credentials`, `target_cm` | значення з `.env` (тест пропускається, якщо не задані) |
+
+**Сесія** між тестами не розривається: наступний тест користується відкритою сесією.
+`logout` виконується один раз у фінальному завершенні прогону (фікстура `device`), якщо сесія ще відкрита.
+
+## Принципи
+
+- `DeviceDriver` створюється тільки у фікстурі `device` (одне з'єднання на сесію: відкриття порту може перезавантажити ESP32).
+- Тест не містить рядків команд плати: вони інкапсульовані в методах драйвера
+  (`sonar.set_alarm(45)`, `sonar.start_log(100)`, `sonar.stats()`, `sonar.calibrate(60)`, `device.whoami()` ...).
+  Сирі `distance_raw()`, `calibrate_raw()` потрібні тільки негативним тестам з некоректним вводом.
+- Очікування - по патернах (`wait_for`, `wait_for_any`, `command(..., until=...)`), без `time.sleep()` для логіки;
+  проміжки часу між рядками виводу беруться з міток плати (`Response.stamps()`, `Response.gaps()`).
+- Тест знає тільки про `Response` (`.has()`, `.has_code("E704")`, `.codes`, `.find()`), але не про побайтовий формат UART.
+- Фонова телеметрія (`[NAV]`, `[ACU]`, `[PWR]`, `[HW]`) і службові повідомлення ESP-IDF відфільтровуються з відповіді команди (PRD, розділ 0).
+- Іменування: `test_tc_snr_<NN>_<slug>`, перший рядок docstring - ID кейса з `../TEST_CASES.md` та його назва англійською (весь код, коментарі та логи фреймворку англійською);
+  параметризовані кейси мають id рядків таблиці параметрів (`a-N=1-min`, `b-N=2-min+1`, ...).
+- Відстань без руху цілі задається `distance calibrate <ref>`: після неї датчик показує `ref` см.
+- Підтверджені баги - `@pytest.mark.xfail(strict=True, reason="BUG-...")`.
+
+## Особливості Guard
+
+- Стан охорони (знята, PIN 1234, зона 50, реле закрите, NORMAL, без alerts) повертає фікстура `guard` до і після кожного тесту; тест, що міняє PIN, у `finally` повертає його сам.
+- INTRUSION отримуємо зоною `guard zone 150` (ціль всередині), тишу - зоною 50 (ціль ззовні). Таймери (10 с арміювання, 15 с до ALARM, нагадування кожні 10 с) міряються за мітками плати `I (мс)` з допуском ±1 с.
+- Версія прошивки для Guard перевіряється наживо в фікстурі, а не лише на старті прогону: OTA-тести можуть її змінити посеред прогону.
+- У повному прогоні Guard іде раніше за OTA (порядок папок `basic`, `guard`, `ota`, `sonar`). Якщо прогін стартував на 2.3.0, після OTA-тестів плата повертається на 2.3.0, тож наступний прогін Guard знову можна запускати одразу.
+- Відомий баг BUG-GRD-01 (лічильник хибних PIN не скидається): TC-GRD-15 a і b - `xfail(strict)`, а тести лічильника беруть фікстуру `fresh_attempts` (reboot плати). Після виправлення бага reboot у фікстурі прибрати.
+- PIN у `guard disarm` / `guard pin` маскується у логах (`***`).
+- В EMERGENCY вийти можна лише reboot-ом; через ~10 команд плата сама перезавантажується від перегріву, тому TC-GRD-19 виконує мінімум команд.
+
+## Відомі обмеження
+
+- Один пристрій, один порт: тести виконуються послідовно; повний набір сонара триває близько 17 хвилин, Guard - близько 14 хвилин (на кожен тест ~10 с іде на повернення плати в чистий стан).
+- USB-UART міст інколи відповідає повільно (хвилини): чекаємо, процес не вбиваємо.
+- Тести, що фізично потребують руки, вимкнення хотспота, відключення датчика чи спостереження очима не були автоматизовані
